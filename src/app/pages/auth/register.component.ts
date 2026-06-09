@@ -268,12 +268,9 @@ export class RegisterComponent {
       company: this.rhForm.company.trim(),
       password: this.rhForm.password,
     }).subscribe({
-      next: (res) => {
-        this.successMessage.set(`Compte RH créé avec succès ! Bienvenue ${res.user.fullName}`);
+      next: (user) => {
+        this.successMessage.set(`Compte RH créé avec succès ! Bienvenue ${user.fullName}`);
         this.isLoading.set(false);
-        setTimeout(() => {
-          this.router.navigate(['/rh/dashboard']);
-        }, 1500);
       },
       error: (err) => {
         this.errorMessage.set(extractApiError(err));
