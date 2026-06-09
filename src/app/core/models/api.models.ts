@@ -59,11 +59,40 @@ export interface ProfileRequest {
   bio?: string;
 }
 
+export type TestDifficulty = 'FACILE' | 'MOYEN' | 'DIFFICILE' | 'MIXTE';
+
 export interface TestQuestion {
   id?: number;
   questionText: string;
   expectedAnswer?: string;
   questionOrder?: number;
+  weightCategory?: string;
+  weight?: number;
+  options?: string[];
+  correctOptionIndex?: number;
+}
+
+export interface CvAnalysisResponse {
+  profileId: number;
+  fullName: string;
+  jobTitle: string;
+  experienceYears: number;
+  declaredSkills: string | null;
+  bio: string | null;
+  cvFilePath: string;
+  cvAnalyzedAt: string;
+  coreSkills?: string[];
+  complementarySkills?: string[];
+  technicalSoftSkills?: string[];
+  summary?: string;
+}
+
+export interface EvaluationStartRequest {
+  profileId: number;
+  title?: string;
+  description?: string;
+  questionCount: number;
+  difficulty: TestDifficulty;
 }
 
 export interface SkillTest {
@@ -87,7 +116,17 @@ export interface TestGenerateRequest {
 
 export interface TestSubmitRequest {
   testId: number;
-  answers: { questionId: number; answer: string }[];
+  answers: { questionId: number; answer?: string; selectedOptionIndex?: number }[];
+}
+
+export interface QuestionScoreDetail {
+  questionId: number;
+  questionText: string;
+  weightCategory: string;
+  weight: number;
+  score: number;
+  userAnswer: string;
+  feedback: string;
 }
 
 export interface TestResult {
@@ -98,11 +137,38 @@ export interface TestResult {
   profileName: string;
   score: number;
   complianceScore: number;
+  icgScore?: number;
+  exhaustivityCoefficient?: number;
+  conformityCategory?: string;
+  conformityLabel?: string;
+  rhDecision?: string;
+  rhDecisionLabel?: string;
   answers: string;
   aiFeedback: string;
   status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED';
   completedAt: string | null;
   createdAt: string;
+}
+
+export interface EvaluationResult {
+  id: number;
+  testId: number;
+  testTitle: string;
+  profileId: number;
+  profileName: string;
+  icgScore: number;
+  exhaustivityCoefficient?: number;
+  conformityCategory?: string;
+  conformityLabel?: string;
+  rhDecision?: string;
+  rhDecisionLabel?: string;
+  aiFeedback: string;
+  status: string;
+  questionScores: QuestionScoreDetail[];
+  completedAt: string | null;
+  createdAt: string;
+  score?: number;
+  complianceScore?: number;
 }
 
 export interface DashboardStats {

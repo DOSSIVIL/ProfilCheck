@@ -2,7 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { EmployeeProfile, ProfileRequest } from '../models/api.models';
+import { CvAnalysisResponse, EmployeeProfile, ProfileRequest } from '../models/api.models';
 
 @Injectable({ providedIn: 'root' })
 export class EmployeeService {
@@ -27,5 +27,15 @@ export class EmployeeService {
 
   delete(id: number): Observable<void> {
     return this.http.delete<void>(`${this.baseUrl}/${id}`);
+  }
+
+  uploadCv(profileId: number, file: File): Observable<CvAnalysisResponse> {
+    const formData = new FormData();
+    formData.append('file', file, file.name);
+    return this.http.post<CvAnalysisResponse>(
+      `${this.baseUrl}/${profileId}/cv`,
+      formData,
+      { reportProgress: false }
+    );
   }
 }

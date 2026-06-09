@@ -1,19 +1,31 @@
 import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { DatePipe, DecimalPipe } from '@angular/common';
+import { catchError, finalize, switchMap, tap, throwError, timeout } from 'rxjs';
 import { TestService } from '../../../core/services/test.service';
 import { ResultService } from '../../../core/services/result.service';
 import { EmployeeService } from '../../../core/services/employee.service';
+import { EvaluationService } from '../../../core/services/evaluation.service';
+import { HealthService } from '../../../core/services/health.service';
 import {
   SkillTest,
   TestResult,
   EmployeeProfile,
   TestQuestion,
+  CvAnalysisResponse,
+  EvaluationResult,
+  TestDifficulty,
 } from '../../../core/models/api.models';
 import { extractApiError } from '../../../core/utils/api-error.util';
 
 type Tab = 'tests' | 'results';
-type Difficulty = 'FACILE' | 'MOYEN' | 'DIFFICILE' | 'MIXTE';
+type Difficulty = TestDifficulty;
+type LogType = 'info' | 'success' | 'error' | 'warning';
+interface StatusLog {
+  type: LogType;
+  message: string;
+  time: string;
+}
 
 @Component({
   selector: 'app-rh-evaluations',
@@ -126,7 +138,7 @@ type Difficulty = 'FACILE' | 'MOYEN' | 'DIFFICILE' | 'MIXTE';
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
                     </svg>
-                    Répondre
+                    Passer le test
                   </button>
                 </div>
               </div>
@@ -201,44 +213,96 @@ type Difficulty = 'FACILE' | 'MOYEN' | 'DIFFICILE' | 'MIXTE';
 
       <!-- MODAL : Créer un test IA -->
       @if (showCreateModal()) {
-        <div class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+        <div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
              (click)="closeCreateModal()">
-          <div class="bg-white dark:bg-dark-surface rounded-2xl shadow-2xl w-full max-w-lg"
+          <div class="bg-white dark:bg-dark-surface rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col"
                (click)="$event.stopPropagation()">
 
-            <div class="p-6 border-b border-gray-200 dark:border-dark-border flex items-start justify-between">
-              <div>
-                <div class="flex items-center gap-2 mb-1">
-                  <div class="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
-                    <svg class="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
-                    </svg>
+            <!-- Header -->
+            <div class="p-6 border-b border-gray-200 dark:border-dark-border bg-gradient-to-r from-primary/5 to-secondary/5 rounded-t-2xl">
+              <div class="flex items-start justify-between">
+                <div>
+                  <div class="flex items-center gap-3 mb-2">
+                    <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-md">
+                      <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h3 class="text-xl font-bold dark:text-dark-text">Générer un test IA</h3>
+                      <p class="text-sm text-gray-500 dark:text-dark-text-secondary">CV → Analyse IA → Questions personnalisées</p>
+                    </div>
                   </div>
-                  <h3 class="text-lg font-semibold dark:text-dark-text">Créer un test IA</h3>
+                  <!-- Stepper -->
+                  <div class="flex items-center gap-2 mt-4">
+                    @for (step of pipelineSteps; track step.id; let i = $index) {
+                      <div class="flex items-center gap-2">
+                        <div [class]="getStepClass(step.id)"
+                          class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all">
+                          @if (currentPipelineStep() > step.id) { ✓ }
+                          @else if (currentPipelineStep() === step.id && saving()) {
+                            <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                          } @else { {{ step.id }} }
+                        </div>
+                        <span class="text-xs font-medium hidden sm:inline" [class]="currentPipelineStep() >= step.id ? 'text-primary' : 'text-gray-400'">{{ step.label }}</span>
+                        @if (i < pipelineSteps.length - 1) {
+                          <div class="w-6 h-0.5 rounded" [class]="currentPipelineStep() > step.id ? 'bg-primary' : 'bg-gray-200 dark:bg-dark-border'"></div>
+                        }
+                      </div>
+                    }
+                  </div>
                 </div>
-                <p class="text-sm text-gray-500 dark:text-dark-text-secondary">
-                  L'IA génère les questions à partir du CV
-                </p>
+                <button (click)="closeCreateModal()" [disabled]="saving()"
+                  class="text-gray-400 hover:text-gray-600 dark:hover:text-dark-text transition-colors p-1 disabled:opacity-30">
+                  <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
-              <button (click)="closeCreateModal()"
-                class="text-gray-400 hover:text-gray-600 dark:hover:text-dark-text transition-colors p-1">
-                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
             </div>
 
-            <form class="p-6 space-y-5 max-h-[70vh] overflow-y-auto" (ngSubmit)="createTest()">
+            <div class="flex-1 overflow-y-auto p-6 space-y-5">
+
+              @if (backendOnline() === false) {
+                <div class="flex items-start gap-3 p-4 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
+                  <svg class="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>
+                  <div>
+                    <p class="text-sm font-semibold text-red-600 dark:text-red-400">Backend inaccessible</p>
+                    <p class="text-xs text-red-500/80 mt-1">Démarrez le serveur : <code class="bg-red-100 dark:bg-red-900/40 px-1 rounded">./run-dev.sh</code> dans le dossier Backend (port 8080)</p>
+                  </div>
+                </div>
+              }
+
+              @if (backendOnline() === true && aiConfigured() === false) {
+                <div class="flex items-start gap-3 p-4 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                  <svg class="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>
+                  <div>
+                    <p class="text-sm font-semibold text-amber-700 dark:text-amber-300">Clé API IA non configurée</p>
+                    <p class="text-xs text-amber-600/80 dark:text-amber-400/80 mt-1">
+                      Ajoutez <code class="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">OPENAI_API_KEY</code> dans <code class="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">Backend/.env</code> puis redémarrez avec <code class="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">./run-dev.sh</code>
+                    </p>
+                  </div>
+                </div>
+              }
+
+              @if (employees().length === 0) {
+                <div class="p-4 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm text-amber-700 dark:text-amber-300">
+                  Aucun employé trouvé. Créez d'abord un employé dans la section <strong>Employés</strong>.
+                </div>
+              }
 
               @if (formError()) {
-                <div class="flex items-start gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-900/20
-                            text-red-600 dark:text-red-400 text-sm">
-                  <svg class="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                      d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-                  </svg>
-                  {{ formError() }}
+                <div class="flex items-start gap-3 p-4 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
+                  <svg class="w-5 h-5 text-red-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>
+                  <p class="text-sm font-medium text-red-600 dark:text-red-400">{{ formError() }}</p>
+                </div>
+              }
+
+              @if (formSuccess()) {
+                <div class="flex items-start gap-3 p-4 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
+                  <svg class="w-5 h-5 text-green-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                  <p class="text-sm font-medium text-green-600 dark:text-green-400">{{ formSuccess() }}</p>
                 </div>
               }
 
@@ -316,7 +380,7 @@ type Difficulty = 'FACILE' | 'MOYEN' | 'DIFFICILE' | 'MIXTE';
                       <p class="text-sm text-gray-600 dark:text-dark-text-secondary font-medium">
                         Cliquez pour importer le CV
                       </p>
-                      <p class="text-xs text-gray-400 mt-1">PDF, DOC, DOCX, TXT — max 5 MB</p>
+                      <p class="text-xs text-gray-400 mt-1">PDF, DOC, DOCX, TXT — max 10 MB</p>
                     </div>
                   }
                 </div>
@@ -384,52 +448,86 @@ type Difficulty = 'FACILE' | 'MOYEN' | 'DIFFICILE' | 'MIXTE';
                 </div>
               </div>
 
-              <!-- Actions -->
-              <div class="flex gap-3 pt-2">
-                <button type="button" (click)="closeCreateModal()" class="btn-secondary flex-1">
-                  Annuler
-                </button>
-                <button type="submit"
-                  [disabled]="saving() || !isFormValid()"
-                  class="btn-primary flex-1 disabled:opacity-50 disabled:cursor-not-allowed
-                         inline-flex items-center justify-center gap-2">
-                  @if (saving()) {
-                    <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                      <path class="opacity-75" fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                    </svg>
-                    Génération en cours…
-                  } @else {
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
-                    </svg>
-                    Générer le test
+              @if (cvAnalysis()) {
+                <div class="p-4 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800">
+                  <p class="text-xs font-bold uppercase tracking-wider text-primary mb-2">Profil extrait du CV</p>
+                  <p class="text-sm text-gray-700 dark:text-dark-text-secondary mb-3">{{ cvAnalysis()!.summary || cvAnalysis()!.bio || 'Analyse terminée.' }}</p>
+                  @if (cvAnalysis()!.coreSkills?.length) {
+                    <div class="flex flex-wrap gap-1.5">
+                      @for (skill of cvAnalysis()!.coreSkills; track skill) {
+                        <span class="text-xs px-2.5 py-1 rounded-full bg-primary/15 text-primary font-medium">{{ skill }}</span>
+                      }
+                    </div>
                   }
-                </button>
-              </div>
+                </div>
+              }
 
-            </form>
+              <!-- Journal de communication -->
+              @if (statusLogs().length > 0) {
+                <div class="rounded-xl border border-gray-200 dark:border-dark-border overflow-hidden">
+                  <div class="px-4 py-2.5 bg-gray-50 dark:bg-dark-bg border-b border-gray-200 dark:border-dark-border flex items-center justify-between">
+                    <p class="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-dark-text-secondary">Journal de génération</p>
+                    @if (saving()) {
+                      <span class="text-xs text-primary animate-pulse">En cours…</span>
+                    }
+                  </div>
+                  <div class="max-h-40 overflow-y-auto p-3 space-y-1.5 font-mono text-xs">
+                    @for (log of statusLogs(); track $index) {
+                      <div class="flex items-start gap-2" [class]="logClass(log.type)">
+                        <span class="flex-shrink-0 font-bold w-4">{{ logIcon(log.type) }}</span>
+                        <span class="text-gray-400 flex-shrink-0">{{ log.time }}</span>
+                        <span class="flex-1">{{ log.message }}</span>
+                      </div>
+                    }
+                  </div>
+                </div>
+              }
+
+            </div>
+
+            <!-- Footer actions -->
+            <div class="p-6 border-t border-gray-200 dark:border-dark-border bg-gray-50/50 dark:bg-dark-bg/50 rounded-b-2xl flex gap-3">
+              <button type="button" (click)="closeCreateModal()" [disabled]="saving()" class="btn-secondary flex-1 disabled:opacity-40">
+                Annuler
+              </button>
+              <button type="button" (click)="createTest()" [disabled]="saving()"
+                class="btn-primary flex-1 inline-flex items-center justify-center gap-2 disabled:opacity-70">
+                @if (saving()) {
+                  <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                  </svg>
+                  {{ generationStep() || 'Traitement…' }}
+                } @else {
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/>
+                  </svg>
+                  Générer le test
+                }
+              </button>
+            </div>
           </div>
         </div>
       }
 
-      <!-- MODAL : Répondre au test -->
+      <!-- MODAL : Passer le test avec l'employé -->
       @if (selectedTest()) {
         <div class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
              (click)="selectedTest.set(null)">
-          <div class="bg-white dark:bg-dark-surface rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col"
+          <div class="bg-white dark:bg-dark-surface rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col"
                (click)="$event.stopPropagation()">
 
             <div class="p-6 border-b border-gray-200 dark:border-dark-border flex-shrink-0">
               <div class="flex items-start justify-between">
                 <div>
-                  <h3 class="text-lg font-semibold dark:text-dark-text">{{ selectedTest()!.title }}</h3>
+                  <h3 class="text-lg font-semibold dark:text-dark-text">Passer le test — {{ selectedTest()!.title }}</h3>
                   <p class="text-sm text-gray-500 dark:text-dark-text-secondary mt-0.5">
                     {{ selectedTest()!.profileName }}
                     <span class="mx-1.5 text-gray-300">·</span>
                     {{ selectedTest()!.questions.length }} question{{ selectedTest()!.questions.length > 1 ? 's' : '' }}
+                  </p>
+                  <p class="text-xs text-green-700 dark:text-green-300 mt-2 bg-green-50 dark:bg-green-900/20 px-3 py-1.5 rounded-lg inline-block">
+                    La bonne réponse est en vert. Cliquez sur la réponse donnée par l'employé.
                   </p>
                 </div>
                 <button (click)="selectedTest.set(null)"
@@ -473,21 +571,47 @@ type Difficulty = 'FACILE' | 'MOYEN' | 'DIFFICILE' | 'MIXTE';
                       <span class="text-primary font-semibold mr-1.5">Q{{ i + 1 }}.</span>
                       {{ q.questionText }}
                     </p>
-                    <!-- Version corrigée - affichage simple sans difficulté -->
-                    <span class="text-xs px-2 py-0.5 rounded-full flex-shrink-0 bg-gray-100 text-gray-600 dark:bg-dark-border dark:text-dark-text-secondary">
-                      Question {{ i + 1 }}
-                    </span>
+                    @if (q.weightCategory) {
+                      <span [class]="weightClass(q.weightCategory)"
+                        class="text-xs px-2 py-0.5 rounded-full flex-shrink-0 font-medium">
+                        {{ weightLabel(q.weightCategory) }}
+                      </span>
+                    }
                   </div>
-                  <textarea
-                    [(ngModel)]="answers[q.id!]"
-                    [name]="'answer_' + q.id"
-                    rows="3"
-                    placeholder="Votre réponse…"
-                    class="w-full rounded-lg border border-gray-300 dark:border-dark-border
-                           bg-white dark:bg-dark-bg px-4 py-2.5 text-sm
-                           focus:ring-2 focus:ring-primary focus:border-transparent
-                           dark:text-dark-text resize-none transition-colors">
-                  </textarea>
+
+                  @if (hasMcq(q)) {
+                    <div class="space-y-2">
+                      @for (opt of q.options!; track $index; let optIdx = $index) {
+                        <button type="button"
+                          (click)="selectOption(q.id!, optIdx)"
+                          [class]="optionClass(q, optIdx)"
+                          class="w-full text-left px-4 py-3 rounded-lg border text-sm transition-all
+                                 flex items-start gap-3">
+                          <span class="flex-shrink-0 w-6 h-6 rounded-full border flex items-center justify-center text-xs font-bold"
+                            [class]="optionBadgeClass(q, optIdx)">
+                            {{ optionLetter(optIdx) }}
+                          </span>
+                          <span class="flex-1 dark:text-dark-text">{{ opt }}</span>
+                          @if (optIdx === q.correctOptionIndex) {
+                            <span class="text-xs font-semibold text-green-700 dark:text-green-300 bg-green-100 dark:bg-green-900/40 px-2 py-0.5 rounded-full flex-shrink-0">
+                              Bonne réponse
+                            </span>
+                          }
+                        </button>
+                      }
+                    </div>
+                  } @else {
+                    <textarea
+                      [(ngModel)]="answers[q.id!]"
+                      [name]="'answer_' + q.id"
+                      rows="3"
+                      placeholder="Réponse de l'employé…"
+                      class="w-full rounded-lg border border-gray-300 dark:border-dark-border
+                             bg-white dark:bg-dark-bg px-4 py-2.5 text-sm
+                             focus:ring-2 focus:ring-primary focus:border-transparent
+                             dark:text-dark-text resize-none transition-colors">
+                    </textarea>
+                  }
                 </div>
               }
 
@@ -510,7 +634,7 @@ type Difficulty = 'FACILE' | 'MOYEN' | 'DIFFICILE' | 'MIXTE';
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
                     </svg>
-                    Soumettre les réponses
+                    Soumettre le formulaire
                   }
                 </button>
               </div>
@@ -519,11 +643,71 @@ type Difficulty = 'FACILE' | 'MOYEN' | 'DIFFICILE' | 'MIXTE';
         </div>
       }
 
+      <!-- MODAL : Résultat après soumission -->
+      @if (submitResult()) {
+        <div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4"
+             (click)="closeSubmitResult()">
+          <div class="bg-white dark:bg-dark-surface rounded-2xl shadow-2xl w-full max-w-lg"
+               (click)="$event.stopPropagation()">
+            <div class="p-6 border-b border-gray-200 dark:border-dark-border">
+              <h3 class="text-xl font-bold dark:text-dark-text">Évaluation terminée</h3>
+              <p class="text-sm text-gray-500 dark:text-dark-text-secondary mt-1">
+                {{ submitResult()!.profileName }} — {{ submitResult()!.testTitle }}
+              </p>
+            </div>
+            <div class="p-6 space-y-5">
+              <div class="grid grid-cols-2 gap-4">
+                <div class="p-4 rounded-xl bg-primary/5 border border-primary/10 text-center">
+                  <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Score ICG</p>
+                  <p class="text-3xl font-bold text-primary">
+                    {{ submitResult()!.icgScore | number:'1.0-1' }}%
+                  </p>
+                </div>
+                <div class="p-4 rounded-xl bg-secondary/5 border border-secondary/10 text-center">
+                  <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Conformité</p>
+                  <p class="text-lg font-bold text-secondary">
+                    {{ submitResult()!.conformityLabel || '—' }}
+                  </p>
+                </div>
+              </div>
+              @if (submitResult()!.rhDecisionLabel) {
+                <div class="p-4 rounded-xl border text-sm text-center"
+                  [class]="decisionClass(submitResult()!.rhDecision)">
+                  <p class="text-xs uppercase tracking-wide opacity-70 mb-1">Décision RH</p>
+                  <p class="text-lg font-bold">{{ submitResult()!.rhDecisionLabel }}</p>
+                </div>
+              }
+              @if (submitResult()!.aiFeedback) {
+                <p class="text-sm text-gray-600 dark:text-dark-text-secondary">{{ submitResult()!.aiFeedback }}</p>
+              }
+              <div class="flex flex-col gap-3">
+                <button type="button" (click)="downloadReport(submitResult()!.id)"
+                  [disabled]="downloadingReport()"
+                  class="btn-primary w-full inline-flex items-center justify-center gap-2 disabled:opacity-50">
+                  @if (downloadingReport()) {
+                    <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    Génération…
+                  } @else {
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/>
+                    </svg>
+                    Télécharger le rapport PDF
+                  }
+                </button>
+                <button type="button" (click)="closeSubmitResult()" class="btn-secondary w-full">
+                  Fermer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      }
+
       <!-- MODAL : Détail résultat -->
       @if (selectedResult()) {
         <div class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
              (click)="selectedResult.set(null)">
-          <div class="bg-white dark:bg-dark-surface rounded-2xl shadow-2xl w-full max-w-md"
+          <div class="bg-white dark:bg-dark-surface rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
                (click)="$event.stopPropagation()">
 
             <div class="p-6 border-b border-gray-200 dark:border-dark-border flex items-center justify-between">
@@ -539,18 +723,25 @@ type Difficulty = 'FACILE' | 'MOYEN' | 'DIFFICILE' | 'MIXTE';
             <div class="p-6 space-y-5">
               <div class="grid grid-cols-2 gap-4">
                 <div class="p-4 rounded-xl bg-primary/5 border border-primary/10 text-center">
-                  <p class="text-xs text-gray-500 dark:text-dark-text-secondary uppercase tracking-wide mb-1">Score</p>
+                  <p class="text-xs text-gray-500 dark:text-dark-text-secondary uppercase tracking-wide mb-1">ICG</p>
                   <p class="text-3xl font-bold text-primary">
-                    {{ selectedResult()!.score | number:'1.0-1' }}%
+                    {{ (selectedResult()!.icgScore ?? selectedResult()!.score) | number:'1.0-1' }}%
                   </p>
                 </div>
                 <div class="p-4 rounded-xl bg-secondary/5 border border-secondary/10 text-center">
                   <p class="text-xs text-gray-500 dark:text-dark-text-secondary uppercase tracking-wide mb-1">Conformité</p>
                   <p class="text-3xl font-bold text-secondary">
-                    {{ selectedResult()!.complianceScore | number:'1.0-1' }}%
+                    {{ selectedResult()!.conformityLabel || (selectedResult()!.complianceScore | number:'1.0-1') + '%' }}
                   </p>
                 </div>
               </div>
+
+              @if (selectedResult()!.rhDecisionLabel) {
+                <div class="p-3 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm">
+                  <span class="font-medium text-amber-800 dark:text-amber-300">Décision RH :</span>
+                  {{ selectedResult()!.rhDecisionLabel }}
+                </div>
+              }
 
               <div class="space-y-3">
                 <div class="flex items-start gap-3">
@@ -575,6 +766,19 @@ type Difficulty = 'FACILE' | 'MOYEN' | 'DIFFICILE' | 'MIXTE';
                 </div>
               </div>
 
+              @if (hasQuestionScores(selectedResult()!)) {
+                <div class="space-y-3">
+                  <p class="text-sm font-medium dark:text-dark-text">Détail par question</p>
+                  @for (qs of getQuestionScores(selectedResult()!); track qs.questionId) {
+                    <div class="p-3 rounded-xl border border-gray-200 dark:border-dark-border text-sm">
+                      <p class="font-medium dark:text-dark-text mb-1">{{ qs.questionText }}</p>
+                      <p class="text-xs text-gray-500 mb-1">Score : {{ (qs.score * 100) | number:'1.0-0' }}%</p>
+                      <p class="text-xs text-gray-600 dark:text-dark-text-secondary">{{ qs.feedback }}</p>
+                    </div>
+                  }
+                </div>
+              }
+
               @if (selectedResult()!.aiFeedback) {
                 <div class="p-4 rounded-xl bg-gray-50 dark:bg-dark-bg border border-gray-200 dark:border-dark-border">
                   <div class="flex items-center gap-2 mb-2">
@@ -582,12 +786,23 @@ type Difficulty = 'FACILE' | 'MOYEN' | 'DIFFICILE' | 'MIXTE';
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
                     </svg>
-                    <p class="text-sm font-medium dark:text-dark-text">Feedback IA</p>
+                    <p class="text-sm font-medium dark:text-dark-text">Synthèse IA</p>
                   </div>
                   <p class="text-sm text-gray-600 dark:text-dark-text-secondary whitespace-pre-wrap leading-relaxed">
                     {{ selectedResult()!.aiFeedback }}
                   </p>
                 </div>
+              }
+
+              @if (selectedResult()!.id) {
+                <button type="button" (click)="downloadReport(selectedResult()!.id)"
+                  [disabled]="downloadingReport()"
+                  class="btn-secondary w-full inline-flex items-center justify-center gap-2 disabled:opacity-50">
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/>
+                  </svg>
+                  Télécharger le rapport PDF
+                </button>
               }
 
               <button (click)="selectedResult.set(null)" class="btn-primary w-full">
@@ -602,23 +817,41 @@ type Difficulty = 'FACILE' | 'MOYEN' | 'DIFFICILE' | 'MIXTE';
   `,
 })
 export class RhEvaluationsComponent implements OnInit {
-  private readonly testService   = inject(TestService);
+  private readonly testService = inject(TestService);
   private readonly resultService = inject(ResultService);
   private readonly employeeService = inject(EmployeeService);
+  private readonly evaluationService = inject(EvaluationService);
+  private readonly healthService = inject(HealthService);
 
-  protected readonly activeTab      = signal<Tab>('tests');
-  protected readonly tests          = signal<SkillTest[]>([]);
-  protected readonly results        = signal<TestResult[]>([]);
-  protected readonly employees      = signal<EmployeeProfile[]>([]);
-  protected readonly loading        = signal(true);
-  protected readonly error          = signal('');
+  protected readonly activeTab = signal<Tab>('tests');
+  protected readonly tests = signal<SkillTest[]>([]);
+  protected readonly results = signal<TestResult[]>([]);
+  protected readonly employees = signal<EmployeeProfile[]>([]);
+  protected readonly loading = signal(true);
+  protected readonly error = signal('');
   protected readonly showCreateModal = signal(false);
-  protected readonly selectedTest   = signal<SkillTest | null>(null);
-  protected readonly selectedResult = signal<TestResult | null>(null);
-  protected readonly saving         = signal(false);
-  protected readonly formError      = signal('');
-  protected readonly submitSuccess  = signal('');
-  protected readonly cvFileName     = signal('');
+  protected readonly selectedTest = signal<SkillTest | null>(null);
+  protected readonly selectedResult = signal<EvaluationResult | TestResult | null>(null);
+  protected readonly saving = signal(false);
+  protected readonly formError = signal('');
+  protected readonly formSuccess = signal('');
+  protected readonly submitSuccess = signal('');
+  protected readonly cvFileName = signal('');
+  protected readonly generationStep = signal('');
+  protected readonly cvAnalysis = signal<CvAnalysisResponse | null>(null);
+  protected readonly statusLogs = signal<StatusLog[]>([]);
+  protected readonly backendOnline = signal<boolean | null>(null);
+  protected readonly aiConfigured = signal<boolean | null>(null);
+  protected readonly currentPipelineStep = signal(0);
+  protected readonly submitResult = signal<EvaluationResult | null>(null);
+  protected readonly downloadingReport = signal(false);
+
+  protected readonly pipelineSteps = [
+    { id: 1, label: 'Validation' },
+    { id: 2, label: 'Analyse CV' },
+    { id: 3, label: 'Génération IA' },
+    { id: 4, label: 'Terminé' },
+  ];
 
   testForm = {
     profileId: 0,
@@ -629,6 +862,7 @@ export class RhEvaluationsComponent implements OnInit {
 
   cvFile: File | null = null;
   answers: Record<number, string> = {};
+  selectedOptions: Record<number, number> = {};
 
   readonly difficultyLevels: { value: Difficulty; label: string; color: string }[] = [
     { value: 'FACILE',    label: 'Facile',   color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
@@ -672,33 +906,90 @@ export class RhEvaluationsComponent implements OnInit {
     this.testForm = { profileId: 0, title: '', questionCount: 5, difficulty: 'MOYEN' };
     this.cvFile = null;
     this.cvFileName.set('');
+    this.cvAnalysis.set(null);
+    this.generationStep.set('');
     this.formError.set('');
+    this.formSuccess.set('');
+    this.statusLogs.set([]);
+    this.currentPipelineStep.set(0);
+    this.backendOnline.set(null);
+    this.aiConfigured.set(null);
     this.showCreateModal.set(true);
+    this.healthService.getStatus().subscribe((status) => {
+      this.backendOnline.set(status.online);
+      this.aiConfigured.set(status.aiConfigured);
+    });
   }
 
   closeCreateModal(): void {
+    if (this.saving()) return;
     this.showCreateModal.set(false);
     this.cvFile = null;
     this.cvFileName.set('');
+    this.cvAnalysis.set(null);
+    this.generationStep.set('');
+    this.formSuccess.set('');
+    this.statusLogs.set([]);
+    this.currentPipelineStep.set(0);
+  }
+
+  private addLog(type: LogType, message: string): void {
+    const time = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    this.statusLogs.update((logs) => [...logs, { type, message, time }]);
+  }
+
+  logIcon(type: LogType): string {
+    return { info: '→', success: '✓', error: '✗', warning: '!' }[type];
+  }
+
+  logClass(type: LogType): string {
+    return {
+      info: 'text-gray-600 dark:text-dark-text-secondary',
+      success: 'text-green-600 dark:text-green-400',
+      error: 'text-red-600 dark:text-red-400',
+      warning: 'text-amber-600 dark:text-amber-400',
+    }[type];
+  }
+
+  getStepClass(stepId: number): string {
+    if (this.currentPipelineStep() > stepId) return 'bg-primary text-white';
+    if (this.currentPipelineStep() === stepId) return 'bg-primary/20 text-primary ring-2 ring-primary';
+    return 'bg-gray-100 dark:bg-dark-border text-gray-400';
   }
 
   onCVSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
-    if (input.files?.[0]) {
-      const file = input.files[0];
-      if (file.size > 5 * 1024 * 1024) {
-        this.formError.set('Le fichier ne doit pas dépasser 5 MB');
-        return;
-      }
-      this.cvFile = file;
-      this.cvFileName.set(file.name);
-      this.formError.set('');
+    const file = input.files?.[0];
+    if (!file) return;
+
+    const allowed = ['.pdf', '.txt', '.doc', '.docx'];
+    const ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'));
+    if (!allowed.includes(ext)) {
+      this.formError.set('Format non supporté. Utilisez PDF ou TXT de préférence.');
+      input.value = '';
+      return;
     }
+
+    if (file.size > 10 * 1024 * 1024) {
+      this.formError.set('Le fichier ne doit pas dépasser 10 MB');
+      input.value = '';
+      return;
+    }
+
+    this.cvFile = file;
+    this.cvFileName.set(file.name);
+    this.cvAnalysis.set(null);
+    this.formError.set('');
+    input.value = '';
+  }
+
+  getProfileId(): number {
+    return Number(this.testForm.profileId) || 0;
   }
 
   isFormValid(): boolean {
     return (
-      this.testForm.profileId > 0 &&
+      this.getProfileId() > 0 &&
       this.testForm.title.trim().length > 0 &&
       this.cvFile !== null &&
       this.testForm.questionCount >= 1 &&
@@ -706,52 +997,193 @@ export class RhEvaluationsComponent implements OnInit {
     );
   }
 
+  getMissingFieldsHint(): string {
+    const missing: string[] = [];
+    if (this.getProfileId() <= 0) missing.push('employé');
+    if (!this.testForm.title.trim()) missing.push('titre');
+    if (!this.cvFile) missing.push('CV');
+    return missing.length
+      ? `Champs manquants : ${missing.join(', ')}.`
+      : '';
+  }
+
   createTest(): void {
-    if (!this.isFormValid()) {
-      this.formError.set('Veuillez remplir tous les champs obligatoires');
+    this.formError.set('');
+    this.formSuccess.set('');
+    this.statusLogs.set([]);
+    this.currentPipelineStep.set(1);
+    this.addLog('info', 'Démarrage de la génération du test…');
+
+    if (this.backendOnline() === false) {
+      this.addLog('error', 'Backend inaccessible sur http://localhost:8080');
+      this.formError.set('Le serveur backend n\'est pas démarré. Lancez ./run-dev.sh dans le dossier Backend.');
+      this.currentPipelineStep.set(0);
       return;
     }
 
-    this.saving.set(true);
-    this.formError.set('');
+    if (!this.isFormValid() || !this.cvFile) {
+      const hint = this.getMissingFieldsHint();
+      this.addLog('error', hint || 'Formulaire incomplet');
+      this.formError.set(hint || 'Veuillez remplir tous les champs obligatoires avant de générer.');
+      this.currentPipelineStep.set(0);
+      return;
+    }
 
-    // Version corrigée - sans questionCount ni difficulty
-    this.testService.generate({
-      profileId: this.testForm.profileId,
-      title: this.testForm.title.trim(),
-      description: `Généré par IA — ${this.testForm.questionCount} questions — niveau ${this.testForm.difficulty}`,
-    }).subscribe({
-      next: () => {
+    const profileId = this.getProfileId();
+    const cvFile = this.cvFile;
+    const employee = this.employees().find((e) => e.id === profileId);
+
+    this.addLog('success', `Formulaire validé — Employé: ${employee?.fullName ?? profileId}, ${this.testForm.questionCount} questions, niveau ${this.getDifficultyLabel()}`);
+    this.saving.set(true);
+    this.cvAnalysis.set(null);
+    this.currentPipelineStep.set(2);
+    this.generationStep.set('Analyse du CV…');
+    this.addLog('info', `Envoi du CV "${cvFile.name}" (${(cvFile.size / 1024).toFixed(0)} Ko) au serveur…`);
+
+    this.employeeService.uploadCv(profileId, cvFile).pipe(
+      timeout(120_000),
+      tap((analysis) => {
+        this.cvAnalysis.set(analysis);
+        this.currentPipelineStep.set(3);
+        this.generationStep.set('Génération des questions IA…');
+        this.addLog('success', `CV analysé — ${analysis.coreSkills?.length ?? 0} compétence(s) clé(s) détectée(s)`);
+        if (analysis.summary) this.addLog('info', `Résumé IA : ${analysis.summary.substring(0, 120)}${analysis.summary.length > 120 ? '…' : ''}`);
+        this.addLog('info', `Demande de génération de ${this.testForm.questionCount} questions au serveur…`);
+      }),
+      catchError((err) => {
+        const msg = extractApiError(err);
+        this.addLog('error', `Échec analyse CV : ${msg}`);
+        this.formError.set(`Erreur analyse CV : ${msg}`);
+        this.currentPipelineStep.set(0);
+        return throwError(() => err);
+      }),
+      switchMap(() =>
+        this.evaluationService.start({
+          profileId,
+          title: this.testForm.title.trim(),
+          questionCount: this.testForm.questionCount,
+          difficulty: this.testForm.difficulty,
+        }).pipe(
+          timeout(180_000),
+          catchError((err) => {
+            const msg = extractApiError(err);
+            this.addLog('error', `Échec génération IA : ${msg}`);
+            this.formError.set(`Erreur génération : ${msg}`);
+            this.currentPipelineStep.set(0);
+            return throwError(() => err);
+          })
+        )
+      ),
+      finalize(() => {
         this.saving.set(false);
-        this.closeCreateModal();
+        this.generationStep.set('');
+      })
+    ).subscribe({
+      next: (test) => {
+        if (!test.questions?.length) {
+          this.addLog('error', 'Aucune question générée par l\'IA');
+          this.formError.set('Aucune question générée. Vérifiez la clé API OpenAI dans Backend/.env');
+          this.currentPipelineStep.set(0);
+          return;
+        }
+        this.currentPipelineStep.set(4);
+        this.addLog('success', `Test créé avec ${test.questions.length} question(s) — ouverture…`);
+        this.formSuccess.set(`Test "${test.title}" généré avec ${test.questions.length} questions !`);
         this.loadTests();
+        setTimeout(() => {
+          this.closeCreateModal();
+          this.viewTest(test);
+        }, 1200);
       },
-      error: (err: any) => {
-        this.formError.set(extractApiError(err));
-        this.saving.set(false);
+      error: () => {
+        this.currentPipelineStep.set(0);
       },
     });
   }
 
   viewTest(test: SkillTest): void {
     this.answers = {};
+    this.selectedOptions = {};
     test.questions.forEach((q: TestQuestion) => {
       if (q.id) this.answers[q.id] = '';
     });
     this.formError.set('');
     this.submitSuccess.set('');
+    this.submitResult.set(null);
     this.selectedTest.set(test);
+  }
+
+  optionLetter(index: number): string {
+    return String.fromCharCode(65 + index);
+  }
+
+  hasMcq(q: TestQuestion): boolean {
+    return Array.isArray(q.options) && q.options.length >= 2;
+  }
+
+  selectOption(questionId: number, optionIndex: number): void {
+    this.selectedOptions[questionId] = optionIndex;
+  }
+
+  optionClass(q: TestQuestion, optIdx: number): string {
+    const isCorrect = optIdx === q.correctOptionIndex;
+    const isSelected = q.id != null && this.selectedOptions[q.id] === optIdx;
+    if (isCorrect) {
+      return isSelected
+        ? 'border-green-500 bg-green-100 dark:bg-green-900/30 ring-2 ring-green-400'
+        : 'border-green-400 bg-green-50 dark:bg-green-900/15';
+    }
+    if (isSelected) {
+      return 'border-red-400 bg-red-50 dark:bg-red-900/20 ring-2 ring-red-300';
+    }
+    return 'border-gray-200 dark:border-dark-border hover:border-primary/50 bg-white dark:bg-dark-bg';
+  }
+
+  optionBadgeClass(q: TestQuestion, optIdx: number): string {
+    const isCorrect = optIdx === q.correctOptionIndex;
+    const isSelected = q.id != null && this.selectedOptions[q.id] === optIdx;
+    if (isCorrect) return 'border-green-500 text-green-700 bg-green-100';
+    if (isSelected) return 'border-red-400 text-red-700 bg-red-100';
+    return 'border-gray-300 text-gray-500';
+  }
+
+  decisionClass(decision?: string): string {
+    const map: Record<string, string> = {
+      VALIDATION_AUTOMATIQUE: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-800 dark:text-green-300',
+      REVISION_MANUELLE: 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300',
+      ENTRETIEN_OBLIGATOIRE: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-800 dark:text-red-300',
+    };
+    return map[decision ?? ''] ?? 'bg-gray-50 dark:bg-dark-bg border-gray-200 dark:border-dark-border';
   }
 
   submitTest(): void {
     const test = this.selectedTest();
     if (!test) return;
 
+    const mcqQuestions = test.questions.filter((q) => q.id && this.hasMcq(q));
+
+    if (mcqQuestions.length > 0) {
+      const unanswered = mcqQuestions.filter((q) => this.selectedOptions[q.id!] === undefined);
+      if (unanswered.length > 0) {
+        this.formError.set(`Veuillez sélectionner une réponse pour chaque question (${unanswered.length} restante(s))`);
+        return;
+      }
+    }
+
     const answerList = test.questions
       .filter((q: TestQuestion) => q.id)
-      .map((q: TestQuestion) => ({ questionId: q.id!, answer: this.answers[q.id!] || '' }));
+      .map((q: TestQuestion) => {
+        if (this.hasMcq(q)) {
+          return {
+            questionId: q.id!,
+            selectedOptionIndex: this.selectedOptions[q.id!],
+            answer: q.options![this.selectedOptions[q.id!]],
+          };
+        }
+        return { questionId: q.id!, answer: this.answers[q.id!] || '' };
+      });
 
-    if (answerList.every((a: { answer: string }) => !a.answer.trim())) {
+    if (mcqQuestions.length === 0 && answerList.every((a) => !a.answer?.trim())) {
       this.formError.set('Veuillez répondre à au moins une question');
       return;
     }
@@ -759,14 +1191,12 @@ export class RhEvaluationsComponent implements OnInit {
     this.saving.set(true);
     this.formError.set('');
 
-    this.testService.submit({ testId: test.id, answers: answerList }).subscribe({
-      next: (result: TestResult) => {
+    this.evaluationService.submit({ testId: test.id, answers: answerList }).subscribe({
+      next: (result: EvaluationResult) => {
         this.saving.set(false);
-        this.submitSuccess.set(
-          `Test soumis ! Score : ${result.score.toFixed(1)}% — Conformité : ${result.complianceScore.toFixed(1)}%`
-        );
+        this.selectedTest.set(null);
+        this.submitResult.set(result);
         this.loadAll();
-        setTimeout(() => this.submitSuccess.set(''), 4000);
       },
       error: (err: any) => {
         this.formError.set(extractApiError(err));
@@ -775,8 +1205,59 @@ export class RhEvaluationsComponent implements OnInit {
     });
   }
 
+  closeSubmitResult(): void {
+    this.submitResult.set(null);
+  }
+
+  downloadReport(resultId: number): void {
+    this.downloadingReport.set(true);
+    this.evaluationService.downloadReport(resultId).subscribe({
+      next: (blob) => {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `rapport-evaluation-${resultId}.pdf`;
+        link.click();
+        URL.revokeObjectURL(url);
+        this.downloadingReport.set(false);
+      },
+      error: (err: any) => {
+        this.formError.set(extractApiError(err));
+        this.downloadingReport.set(false);
+      },
+    });
+  }
+
   viewResult(result: TestResult): void {
     this.selectedResult.set(result);
+  }
+
+  hasQuestionScores(result: EvaluationResult | TestResult): result is EvaluationResult {
+    return 'questionScores' in result && Array.isArray((result as EvaluationResult).questionScores);
+  }
+
+  getQuestionScores(result: EvaluationResult | TestResult) {
+    return this.hasQuestionScores(result) ? result.questionScores : [];
+  }
+
+  weightLabel(category: string): string {
+    const labels: Record<string, string> = {
+      CORE_SKILL: 'Compétence clé',
+      COMPLEMENTARY_SKILL: 'Complémentaire',
+      TECHNICAL_SOFT_SKILL: 'Soft skill',
+      GENERAL_CONTEXT: 'Contexte',
+    };
+    return labels[category] ?? category;
+  }
+
+  weightClass(category: string): string {
+    const classes: Record<string, string> = {
+      CORE_SKILL: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300',
+      COMPLEMENTARY_SKILL: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300',
+      TECHNICAL_SOFT_SKILL: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+      GENERAL_CONTEXT: 'bg-gray-100 text-gray-600 dark:bg-dark-border dark:text-dark-text-secondary',
+    };
+    return classes[category] ?? classes['GENERAL_CONTEXT'];
   }
 
   getEmployeeName(): string {

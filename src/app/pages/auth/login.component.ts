@@ -1,5 +1,5 @@
 import { Component, inject, signal } from '@angular/core';
-import { Router, RouterLink } from '@angular/router';
+import { RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { AuthService } from '../../core/services/auth.service';
 import { extractApiError } from '../../core/utils/api-error.util';
@@ -137,7 +137,6 @@ import { extractApiError } from '../../core/utils/api-error.util';
 })
 export class LoginComponent {
   private readonly auth = inject(AuthService);
-  private readonly router = inject(Router);
 
   email = '';
   password = '';
@@ -161,7 +160,6 @@ export class LoginComponent {
     this.auth.login({ email: this.email.trim(), password: this.password }).subscribe({
       next: () => {
         this.isLoading.set(false);
-        this.router.navigate(['/rh/dashboard']);
       },
       error: (err) => {
         this.errorMessage.set(extractApiError(err));
