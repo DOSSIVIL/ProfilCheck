@@ -1,6 +1,8 @@
-import { Component, signal } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { Component, inject, signal } from '@angular/core';
+import { Router, RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
+import { AuthService } from '../../core/services/auth.service';
+import { extractApiError } from '../../core/utils/api-error.util';
 
 @Component({
   selector: 'app-login',
@@ -38,6 +40,12 @@ import { FormsModule } from '@angular/forms';
           <div class="glass card p-8 border border-gray-100 dark:border-dark-border">
             <h2 class="text-2xl font-bold text-dark dark:text-dark-text mb-1">Connexion</h2>
             <p class="text-sm text-gray-600 dark:text-dark-text-secondary mb-8">Entrez vos identifiants</p>
+
+            @if (errorMessage()) {
+              <div class="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
+                <p class="text-sm text-red-600 dark:text-red-400 text-center">{{ errorMessage() }}</p>
+              </div>
+            }
 
             <form class="space-y-5" (ngSubmit)="onSubmit()">
               <div>
@@ -83,7 +91,14 @@ import { FormsModule } from '@angular/forms';
                 </label>
                 <a href="#" class="text-primary hover:underline">Mot de passe oublié ?</a>
               </div>
-              <button type="submit" class="btn-primary w-full">Se connecter</button>
+              <button type="submit" [disabled]="isLoading()" class="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100">
+                @if (isLoading()) {
+                  <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  Connexion...
+                } @else {
+                  Se connecter
+                }
+              </button>
             </form>
 
             <div class="relative my-8">
@@ -121,15 +136,37 @@ import { FormsModule } from '@angular/forms';
   `,
 })
 export class LoginComponent {
+  private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
+
   email = '';
   password = '';
   protected readonly showPassword = signal(false);
+  protected readonly isLoading = signal(false);
+  protected readonly errorMessage = signal('');
 
   togglePassword(): void {
     this.showPassword.update((value) => !value);
   }
 
   onSubmit(): void {
-    // Auth logic to be implemented
+    if (!this.email.trim() || !this.password) {
+      this.errorMessage.set('Veuillez remplir tous les champs');
+      return;
+    }
+
+    this.isLoading.set(true);
+    this.errorMessage.set('');
+
+    this.auth.login({ email: this.email.trim(), password: this.password }).subscribe({
+      next: () => {
+        this.isLoading.set(false);
+        this.router.navigate(['/rh/dashboard']);
+      },
+      error: (err) => {
+        this.errorMessage.set(extractApiError(err));
+        this.isLoading.set(false);
+      },
+    });
   }
 }

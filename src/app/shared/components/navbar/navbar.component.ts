@@ -1,6 +1,7 @@
 import { Component, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { ThemeService } from '../../../core/services/theme.service';
+import { AuthService } from '../../../core/services/auth.service';
 
 const NAV_LINKS = [
   { label: 'Problème', href: '#problem' },
@@ -66,8 +67,12 @@ const NAV_LINKS = [
                 </svg>
               }
             </button>
-            <a routerLink="/login" class="btn-secondary text-sm px-5 py-2.5">Se connecter</a>
-            <a routerLink="/register" class="btn-primary text-sm px-5 py-2.5">Essayer gratuitement</a>
+            @if (auth.isAuthenticated()) {
+              <a routerLink="/rh/dashboard" class="btn-primary text-sm px-5 py-2.5">Mon espace RH</a>
+            } @else {
+              <a routerLink="/login" class="btn-secondary text-sm px-5 py-2.5">Se connecter</a>
+              <a routerLink="/register" class="btn-primary text-sm px-5 py-2.5">Essayer gratuitement</a>
+            }
           </div>
 
           <div class="flex lg:hidden items-center gap-2 shrink-0 ml-auto">
@@ -119,8 +124,12 @@ const NAV_LINKS = [
                 </a>
               }
               <div class="flex flex-col gap-2 pt-3 mt-2 border-t border-gray-100 dark:border-dark-border">
-                <a routerLink="/login" (click)="closeMenu()" class="btn-secondary text-sm text-center">Se connecter</a>
-                <a routerLink="/register" (click)="closeMenu()" class="btn-primary text-sm text-center">Essayer gratuitement</a>
+                @if (auth.isAuthenticated()) {
+                  <a routerLink="/rh/dashboard" (click)="closeMenu()" class="btn-primary text-sm text-center">Mon espace RH</a>
+                } @else {
+                  <a routerLink="/login" (click)="closeMenu()" class="btn-secondary text-sm text-center">Se connecter</a>
+                  <a routerLink="/register" (click)="closeMenu()" class="btn-primary text-sm text-center">S'inscrire</a>
+                }
               </div>
             </div>
           </div>
@@ -131,6 +140,7 @@ const NAV_LINKS = [
 })
 export class NavbarComponent {
   protected readonly theme = inject(ThemeService);
+  protected readonly auth = inject(AuthService);
   protected readonly navLinks = NAV_LINKS;
   protected readonly menuOpen = signal(false);
 

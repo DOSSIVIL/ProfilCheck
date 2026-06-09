@@ -1,6 +1,8 @@
-import { Component, signal, effect } from '@angular/core';
-import { Router } from '@angular/router';
+import { Component, inject, signal, effect } from '@angular/core';
+import { Router, RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
+import { AuthService } from '../../core/services/auth.service';
+import { extractApiError } from '../../core/utils/api-error.util';
 
 interface RHFormData {
   name: string;
@@ -18,7 +20,7 @@ class Validators {
 
 @Component({
   selector: 'app-register',
-  imports: [FormsModule],
+  imports: [FormsModule, RouterLink],
   template: `
     <div class="min-h-screen grid grid-cols-1 lg:grid-cols-2">
       <!-- Partie gauche -->
@@ -201,7 +203,7 @@ class Validators {
               <div class="text-center pt-4">
                 <p class="text-sm text-slate-600 dark:text-slate-400">
                   Vous avez déjà un compte ? 
-                  <a href="/login" class="text-indigo-600 hover:text-indigo-700 font-medium">Se connecter</a>
+                  <a routerLink="/login" class="text-indigo-600 hover:text-indigo-700 font-medium">Se connecter</a>
                 </p>
               </div>
             </div>
@@ -212,6 +214,9 @@ class Validators {
   `
 })
 export class RegisterComponent {
+  private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
+
   protected readonly benefits = ['1 test gratuit par mois', 'Aucune carte bancaire requise', 'Configuration en 5 minutes', 'Support 24/7'];
   
   rhForm: RHFormData = {
@@ -228,7 +233,7 @@ export class RegisterComponent {
   successMessage = signal('');
   passwordStrength = { length: false, uppercase: false, number: false, lowercase: false };
 
-  constructor(private router: Router) {
+  constructor() {
     effect(() => {
       this.updatePasswordStrength(this.rhForm.password);
     });
@@ -257,40 +262,24 @@ export class RegisterComponent {
     this.errorMessage.set('');
     this.successMessage.set('');
 
-    setTimeout(() => {
-      try {
-        const companyCode = this.generateCompanyCode(this.rhForm.company);
-        
-        const userData = {
-          id: Date.now(),
-          name: this.rhForm.name,
-          email: this.rhForm.email,
-          role: 'rh',
-          company: this.rhForm.company,
-          companyCode: companyCode,
-          createdAt: new Date().toISOString()
-        };
-        
-        localStorage.setItem('user', JSON.stringify(userData));
-        localStorage.setItem(`company_${companyCode}`, JSON.stringify({
-          name: this.rhForm.company,
-          code: companyCode,
-          rhEmail: this.rhForm.email,
-          createdAt: new Date().toISOString()
-        }));
-        
-        this.successMessage.set(`Compte RH créé avec succès ! Code entreprise : ${companyCode}`);
-        
-        setTimeout(() => {
-          this.router.navigate(['/login']);
-        }, 3000);
-      } catch (error) {
-        this.errorMessage.set('Une erreur est survenue lors de la création du compte');
-        console.error(error);
-      } finally {
+    this.auth.register({
+      name: this.rhForm.name.trim(),
+      email: this.rhForm.email.trim(),
+      company: this.rhForm.company.trim(),
+      password: this.rhForm.password,
+    }).subscribe({
+      next: (res) => {
+        this.successMessage.set(`Compte RH créé avec succès ! Bienvenue ${res.user.fullName}`);
         this.isLoading.set(false);
-      }
-    }, 1500);
+        setTimeout(() => {
+          this.router.navigate(['/rh/dashboard']);
+        }, 1500);
+      },
+      error: (err) => {
+        this.errorMessage.set(extractApiError(err));
+        this.isLoading.set(false);
+      },
+    });
   }
 
   private updatePasswordStrength(password: string): void {
@@ -302,9 +291,4 @@ export class RegisterComponent {
     };
   }
 
-  private generateCompanyCode(companyName: string): string {
-    const prefix = companyName.substring(0, 4).toUpperCase().replace(/[^A-Z]/g, '');
-    const random = Math.random().toString(36).substring(2, 8).toUpperCase();
-    return `${prefix || 'PROF'}-${random}`;
-  }
 }
