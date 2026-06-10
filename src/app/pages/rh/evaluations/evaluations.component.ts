@@ -1,6 +1,9 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, inject, OnInit, signal, computed } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { DatePipe, DecimalPipe } from '@angular/common';
+import { RouterLink, ActivatedRoute, Router } from '@angular/router';
+import { EvaluationSessionService } from '../../../core/services/evaluation-session.service';
+import { SkillsGapPanelComponent } from './skills-gap-panel.component';
 import { catchError, finalize, switchMap, tap, throwError, timeout } from 'rxjs';
 import { TestService } from '../../../core/services/test.service';
 import { ResultService } from '../../../core/services/result.service';
@@ -11,7 +14,6 @@ import {
   SkillTest,
   TestResult,
   EmployeeProfile,
-  TestQuestion,
   CvAnalysisResponse,
   EvaluationResult,
   TestDifficulty,
@@ -29,7 +31,7 @@ interface StatusLog {
 
 @Component({
   selector: 'app-rh-evaluations',
-  imports: [FormsModule, DatePipe, DecimalPipe],
+  imports: [FormsModule, DatePipe, DecimalPipe, RouterLink, SkillsGapPanelComponent],
   template: `
     <div class="space-y-6">
 
@@ -102,7 +104,7 @@ interface StatusLog {
             </div>
             <h3 class="text-lg font-semibold dark:text-dark-text mb-2">Aucun test créé</h3>
             <p class="text-sm text-gray-500 dark:text-dark-text-secondary mb-6 max-w-xs mx-auto">
-              Importez un CV et laissez l'IA générer les questions pour vous
+              Générez un test IA — il apparaîtra ici en attente de passage
             </p>
             <button (click)="openCreateTest()" class="btn-primary inline-flex items-center gap-2">
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -112,38 +114,93 @@ interface StatusLog {
             </button>
           </div>
         } @else {
-          <div class="space-y-3">
-            @for (test of tests(); track test.id) {
-              <div class="card p-5 hover:shadow-md transition-shadow">
-                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 mb-1 flex-wrap">
-                      <h3 class="font-semibold dark:text-dark-text truncate">{{ test.title }}</h3>
-                      <span [class]="statusClass(test.status)"
-                        class="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0">
-                        {{ test.status }}
-                      </span>
-                    </div>
-                    <p class="text-sm text-gray-500 dark:text-dark-text-secondary">
-                      {{ test.profileName }}
-                      <span class="mx-1.5 text-gray-300">·</span>
-                      {{ test.questions.length }} question{{ test.questions.length > 1 ? 's' : '' }}
-                      <span class="mx-1.5 text-gray-300">·</span>
-                      {{ test.createdAt | date:'dd/MM/yyyy' }}
-                    </p>
-                  </div>
-                  <button (click)="viewTest(test)"
-                    class="btn-secondary text-sm px-4 py-2 flex-shrink-0 inline-flex items-center gap-2">
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
-                    </svg>
-                    Passer le test
-                  </button>
+          <!-- File d'attente -->
+          @if (pendingTests().length > 0) {
+            <div class="mb-8">
+              <div class="flex items-center gap-2 mb-4">
+                <div class="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                  <svg class="w-4 h-4 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="font-semibold dark:text-dark-text">File d'attente</h3>
+                  <p class="text-xs text-gray-500 dark:text-dark-text-secondary">{{ pendingTests().length }} test(s) prêt(s) à être passés</p>
                 </div>
               </div>
-            }
-          </div>
+              <div class="space-y-3">
+                @for (test of pendingTests(); track test.id) {
+                  <div class="card p-5 border-l-4 border-l-amber-400 hover:shadow-md transition-shadow">
+                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                      <div class="flex items-start gap-4 flex-1 min-w-0">
+                        <div class="w-11 h-11 rounded-xl bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center flex-shrink-0">
+                          <svg class="w-5 h-5 text-violet-600 dark:text-violet-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/>
+                          </svg>
+                        </div>
+                        <div class="min-w-0">
+                          <div class="flex items-center gap-2 flex-wrap mb-1">
+                            <h3 class="font-semibold dark:text-dark-text truncate">{{ test.title }}</h3>
+                            <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                              En attente
+                            </span>
+                          </div>
+                          <p class="text-sm text-gray-500 dark:text-dark-text-secondary">
+                            {{ test.profileName }}
+                            <span class="mx-1.5 text-gray-300">·</span>
+                            {{ test.questions.length }} questions
+                            <span class="mx-1.5 text-gray-300">·</span>
+                            Créé le {{ test.createdAt | date:'dd/MM/yyyy' }}
+                          </p>
+                        </div>
+                      </div>
+                      <a [routerLink]="['/rh/evaluations/conduire', test.id]"
+                        class="btn-primary text-sm px-5 py-2.5 flex-shrink-0 inline-flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z"/>
+                        </svg>
+                        Passer le test
+                      </a>
+                    </div>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
+          <!-- Tests terminés -->
+          @if (completedTests().length > 0) {
+            <div>
+              <div class="flex items-center gap-2 mb-4">
+                <div class="w-8 h-8 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                  <svg class="w-4 h-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="font-semibold dark:text-dark-text">Tests terminés</h3>
+                  <p class="text-xs text-gray-500 dark:text-dark-text-secondary">Consultez les résultats dans l'onglet Résultats</p>
+                </div>
+              </div>
+              <div class="space-y-2">
+                @for (test of completedTests(); track test.id) {
+                  <div class="card p-4 opacity-75">
+                    <div class="flex items-center justify-between gap-3">
+                      <div class="min-w-0">
+                        <p class="font-medium dark:text-dark-text truncate text-sm">{{ test.title }}</p>
+                        <p class="text-xs text-gray-500">{{ test.profileName }} · {{ test.createdAt | date:'dd/MM/yyyy' }}</p>
+                      </div>
+                      <span class="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 font-medium flex-shrink-0">
+                        Terminé
+                      </span>
+                    </div>
+                  </div>
+                }
+              </div>
+            </div>
+          }
         }
 
       <!-- Tab: Résultats -->
@@ -510,177 +567,54 @@ interface StatusLog {
         </div>
       }
 
-      <!-- MODAL : Passer le test avec l'employé -->
-      @if (selectedTest()) {
-        <div class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-             (click)="selectedTest.set(null)">
-          <div class="bg-white dark:bg-dark-surface rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col"
-               (click)="$event.stopPropagation()">
-
-            <div class="p-6 border-b border-gray-200 dark:border-dark-border flex-shrink-0">
-              <div class="flex items-start justify-between">
-                <div>
-                  <h3 class="text-lg font-semibold dark:text-dark-text">Passer le test — {{ selectedTest()!.title }}</h3>
-                  <p class="text-sm text-gray-500 dark:text-dark-text-secondary mt-0.5">
-                    {{ selectedTest()!.profileName }}
-                    <span class="mx-1.5 text-gray-300">·</span>
-                    {{ selectedTest()!.questions.length }} question{{ selectedTest()!.questions.length > 1 ? 's' : '' }}
-                  </p>
-                  <p class="text-xs text-green-700 dark:text-green-300 mt-2 bg-green-50 dark:bg-green-900/20 px-3 py-1.5 rounded-lg inline-block">
-                    La bonne réponse est en vert. Cliquez sur la réponse donnée par l'employé.
-                  </p>
-                </div>
-                <button (click)="selectedTest.set(null)"
-                  class="text-gray-400 hover:text-gray-600 dark:hover:text-dark-text transition-colors p-1">
-                  <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            <form class="flex-1 overflow-y-auto p-6 space-y-4" (ngSubmit)="submitTest()">
-
-              @if (formError()) {
-                <div class="flex items-start gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-900/20
-                            text-red-600 dark:text-red-400 text-sm">
-                  <svg class="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                      d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-                  </svg>
-                  {{ formError() }}
-                </div>
-              }
-
-              @if (submitSuccess()) {
-                <div class="flex items-start gap-2 p-3 rounded-lg bg-green-50 dark:bg-green-900/20
-                            text-green-600 dark:text-green-400 text-sm">
-                  <svg class="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  {{ submitSuccess() }}
-                </div>
-              }
-
-              @for (q of selectedTest()!.questions; track q.id; let i = $index) {
-                <div class="p-4 rounded-xl border border-gray-200 dark:border-dark-border
-                            hover:border-primary/40 transition-colors">
-                  <div class="flex items-start justify-between gap-3 mb-3">
-                    <p class="text-sm font-medium dark:text-dark-text leading-relaxed">
-                      <span class="text-primary font-semibold mr-1.5">Q{{ i + 1 }}.</span>
-                      {{ q.questionText }}
-                    </p>
-                    @if (q.weightCategory) {
-                      <span [class]="weightClass(q.weightCategory)"
-                        class="text-xs px-2 py-0.5 rounded-full flex-shrink-0 font-medium">
-                        {{ weightLabel(q.weightCategory) }}
-                      </span>
-                    }
-                  </div>
-
-                  @if (hasMcq(q)) {
-                    <div class="space-y-2">
-                      @for (opt of q.options!; track $index; let optIdx = $index) {
-                        <button type="button"
-                          (click)="selectOption(q.id!, optIdx)"
-                          [class]="optionClass(q, optIdx)"
-                          class="w-full text-left px-4 py-3 rounded-lg border text-sm transition-all
-                                 flex items-start gap-3">
-                          <span class="flex-shrink-0 w-6 h-6 rounded-full border flex items-center justify-center text-xs font-bold"
-                            [class]="optionBadgeClass(q, optIdx)">
-                            {{ optionLetter(optIdx) }}
-                          </span>
-                          <span class="flex-1 dark:text-dark-text">{{ opt }}</span>
-                          @if (optIdx === q.correctOptionIndex) {
-                            <span class="text-xs font-semibold text-green-700 dark:text-green-300 bg-green-100 dark:bg-green-900/40 px-2 py-0.5 rounded-full flex-shrink-0">
-                              Bonne réponse
-                            </span>
-                          }
-                        </button>
-                      }
-                    </div>
-                  } @else {
-                    <textarea
-                      [(ngModel)]="answers[q.id!]"
-                      [name]="'answer_' + q.id"
-                      rows="3"
-                      placeholder="Réponse de l'employé…"
-                      class="w-full rounded-lg border border-gray-300 dark:border-dark-border
-                             bg-white dark:bg-dark-bg px-4 py-2.5 text-sm
-                             focus:ring-2 focus:ring-primary focus:border-transparent
-                             dark:text-dark-text resize-none transition-colors">
-                    </textarea>
-                  }
-                </div>
-              }
-
-              <div class="flex gap-3 pt-2 sticky bottom-0 bg-white dark:bg-dark-surface pb-1">
-                <button type="button" (click)="selectedTest.set(null)" class="btn-secondary flex-1">
-                  Fermer
-                </button>
-                <button type="submit"
-                  [disabled]="saving()"
-                  class="btn-primary flex-1 disabled:opacity-50 inline-flex items-center justify-center gap-2">
-                  @if (saving()) {
-                    <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                      <path class="opacity-75" fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                    </svg>
-                    Soumission…
-                  } @else {
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-                    </svg>
-                    Soumettre le formulaire
-                  }
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      }
-
       <!-- MODAL : Résultat après soumission -->
       @if (submitResult()) {
         <div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4"
              (click)="closeSubmitResult()">
-          <div class="bg-white dark:bg-dark-surface rounded-2xl shadow-2xl w-full max-w-lg"
+          <div class="bg-white dark:bg-dark-surface rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto"
                (click)="$event.stopPropagation()">
-            <div class="p-6 border-b border-gray-200 dark:border-dark-border">
-              <h3 class="text-xl font-bold dark:text-dark-text">Évaluation terminée</h3>
-              <p class="text-sm text-gray-500 dark:text-dark-text-secondary mt-1">
-                {{ submitResult()!.profileName }} — {{ submitResult()!.testTitle }}
-              </p>
+            <div class="p-6 border-b border-gray-200 dark:border-dark-border sticky top-0 bg-white dark:bg-dark-surface z-10">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="flex items-center gap-2 mb-1">
+                    <div class="w-8 h-8 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                      <svg class="w-4 h-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                      </svg>
+                    </div>
+                    <h3 class="text-xl font-bold dark:text-dark-text">Évaluation terminée</h3>
+                  </div>
+                  <p class="text-sm text-gray-500 dark:text-dark-text-secondary">
+                    {{ submitResult()!.profileName }} — {{ submitResult()!.testTitle }}
+                  </p>
+                </div>
+                <button (click)="closeSubmitResult()" class="text-gray-400 hover:text-gray-600 p-1">
+                  <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+              </div>
             </div>
             <div class="p-6 space-y-5">
               <div class="grid grid-cols-2 gap-4">
                 <div class="p-4 rounded-xl bg-primary/5 border border-primary/10 text-center">
                   <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Score ICG</p>
-                  <p class="text-3xl font-bold text-primary">
-                    {{ submitResult()!.icgScore | number:'1.0-1' }}%
-                  </p>
+                  <p class="text-3xl font-bold text-primary">{{ submitResult()!.icgScore | number:'1.0-1' }}%</p>
                 </div>
                 <div class="p-4 rounded-xl bg-secondary/5 border border-secondary/10 text-center">
                   <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Conformité</p>
-                  <p class="text-lg font-bold text-secondary">
-                    {{ submitResult()!.conformityLabel || '—' }}
-                  </p>
+                  <p class="text-lg font-bold text-secondary">{{ submitResult()!.conformityLabel || '—' }}</p>
                 </div>
               </div>
               @if (submitResult()!.rhDecisionLabel) {
-                <div class="p-4 rounded-xl border text-sm text-center"
-                  [class]="decisionClass(submitResult()!.rhDecision)">
+                <div class="p-4 rounded-xl border text-sm text-center" [class]="decisionClass(submitResult()!.rhDecision)">
                   <p class="text-xs uppercase tracking-wide opacity-70 mb-1">Décision RH</p>
                   <p class="text-lg font-bold">{{ submitResult()!.rhDecisionLabel }}</p>
                 </div>
               }
-              @if (submitResult()!.aiFeedback) {
-                <p class="text-sm text-gray-600 dark:text-dark-text-secondary">{{ submitResult()!.aiFeedback }}</p>
-              }
-              <div class="flex flex-col gap-3">
+
+              <!-- Fonctionnalité distinctive : analyse des écarts -->
+              <app-skills-gap-panel [resultId]="submitResult()!.id" />
+
+              <div class="flex flex-col gap-3 pt-2">
                 <button type="button" (click)="downloadReport(submitResult()!.id)"
                   [disabled]="downloadingReport()"
                   class="btn-primary w-full inline-flex items-center justify-center gap-2 disabled:opacity-50">
@@ -694,9 +628,7 @@ interface StatusLog {
                     Télécharger le rapport PDF
                   }
                 </button>
-                <button type="button" (click)="closeSubmitResult()" class="btn-secondary w-full">
-                  Fermer
-                </button>
+                <button type="button" (click)="closeSubmitResult()" class="btn-secondary w-full">Fermer</button>
               </div>
             </div>
           </div>
@@ -822,6 +754,9 @@ export class RhEvaluationsComponent implements OnInit {
   private readonly employeeService = inject(EmployeeService);
   private readonly evaluationService = inject(EvaluationService);
   private readonly healthService = inject(HealthService);
+  private readonly sessionService = inject(EvaluationSessionService);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
 
   protected readonly activeTab = signal<Tab>('tests');
   protected readonly tests = signal<SkillTest[]>([]);
@@ -830,12 +765,10 @@ export class RhEvaluationsComponent implements OnInit {
   protected readonly loading = signal(true);
   protected readonly error = signal('');
   protected readonly showCreateModal = signal(false);
-  protected readonly selectedTest = signal<SkillTest | null>(null);
   protected readonly selectedResult = signal<EvaluationResult | TestResult | null>(null);
   protected readonly saving = signal(false);
   protected readonly formError = signal('');
   protected readonly formSuccess = signal('');
-  protected readonly submitSuccess = signal('');
   protected readonly cvFileName = signal('');
   protected readonly generationStep = signal('');
   protected readonly cvAnalysis = signal<CvAnalysisResponse | null>(null);
@@ -861,8 +794,13 @@ export class RhEvaluationsComponent implements OnInit {
   };
 
   cvFile: File | null = null;
-  answers: Record<number, string> = {};
-  selectedOptions: Record<number, number> = {};
+
+  protected readonly pendingTests = computed(() =>
+    this.tests().filter((t) => t.status === 'ACTIVE')
+  );
+  protected readonly completedTests = computed(() =>
+    this.tests().filter((t) => t.status === 'COMPLETED')
+  );
 
   readonly difficultyLevels: { value: Difficulty; label: string; color: string }[] = [
     { value: 'FACILE',    label: 'Facile',   color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
@@ -874,6 +812,17 @@ export class RhEvaluationsComponent implements OnInit {
   ngOnInit(): void {
     this.loadAll();
     this.loadEmployees();
+    this.checkPendingResult();
+  }
+
+  private checkPendingResult(): void {
+    const fromSession = this.sessionService.consumePendingResult();
+    if (fromSession) {
+      this.submitResult.set(fromSession);
+      this.activeTab.set('results');
+      this.loadAll();
+      this.router.navigate([], { relativeTo: this.route, queryParams: {}, replaceUrl: true });
+    }
   }
 
   private loadEmployees(): void {
@@ -1087,64 +1036,16 @@ export class RhEvaluationsComponent implements OnInit {
           return;
         }
         this.currentPipelineStep.set(4);
-        this.addLog('success', `Test créé avec ${test.questions.length} question(s) — ouverture…`);
-        this.formSuccess.set(`Test "${test.title}" généré avec ${test.questions.length} questions !`);
+        this.addLog('success', `Test créé avec ${test.questions.length} question(s) — ajouté à la file d'attente`);
+        this.formSuccess.set(`Test "${test.title}" prêt ! Retrouvez-le dans la file d'attente.`);
         this.loadTests();
-        setTimeout(() => {
-          this.closeCreateModal();
-          this.viewTest(test);
-        }, 1200);
+        this.activeTab.set('tests');
+        setTimeout(() => this.closeCreateModal(), 1800);
       },
       error: () => {
         this.currentPipelineStep.set(0);
       },
     });
-  }
-
-  viewTest(test: SkillTest): void {
-    this.answers = {};
-    this.selectedOptions = {};
-    test.questions.forEach((q: TestQuestion) => {
-      if (q.id) this.answers[q.id] = '';
-    });
-    this.formError.set('');
-    this.submitSuccess.set('');
-    this.submitResult.set(null);
-    this.selectedTest.set(test);
-  }
-
-  optionLetter(index: number): string {
-    return String.fromCharCode(65 + index);
-  }
-
-  hasMcq(q: TestQuestion): boolean {
-    return Array.isArray(q.options) && q.options.length >= 2;
-  }
-
-  selectOption(questionId: number, optionIndex: number): void {
-    this.selectedOptions[questionId] = optionIndex;
-  }
-
-  optionClass(q: TestQuestion, optIdx: number): string {
-    const isCorrect = optIdx === q.correctOptionIndex;
-    const isSelected = q.id != null && this.selectedOptions[q.id] === optIdx;
-    if (isCorrect) {
-      return isSelected
-        ? 'border-green-500 bg-green-100 dark:bg-green-900/30 ring-2 ring-green-400'
-        : 'border-green-400 bg-green-50 dark:bg-green-900/15';
-    }
-    if (isSelected) {
-      return 'border-red-400 bg-red-50 dark:bg-red-900/20 ring-2 ring-red-300';
-    }
-    return 'border-gray-200 dark:border-dark-border hover:border-primary/50 bg-white dark:bg-dark-bg';
-  }
-
-  optionBadgeClass(q: TestQuestion, optIdx: number): string {
-    const isCorrect = optIdx === q.correctOptionIndex;
-    const isSelected = q.id != null && this.selectedOptions[q.id] === optIdx;
-    if (isCorrect) return 'border-green-500 text-green-700 bg-green-100';
-    if (isSelected) return 'border-red-400 text-red-700 bg-red-100';
-    return 'border-gray-300 text-gray-500';
   }
 
   decisionClass(decision?: string): string {
@@ -1154,55 +1055,6 @@ export class RhEvaluationsComponent implements OnInit {
       ENTRETIEN_OBLIGATOIRE: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-800 dark:text-red-300',
     };
     return map[decision ?? ''] ?? 'bg-gray-50 dark:bg-dark-bg border-gray-200 dark:border-dark-border';
-  }
-
-  submitTest(): void {
-    const test = this.selectedTest();
-    if (!test) return;
-
-    const mcqQuestions = test.questions.filter((q) => q.id && this.hasMcq(q));
-
-    if (mcqQuestions.length > 0) {
-      const unanswered = mcqQuestions.filter((q) => this.selectedOptions[q.id!] === undefined);
-      if (unanswered.length > 0) {
-        this.formError.set(`Veuillez sélectionner une réponse pour chaque question (${unanswered.length} restante(s))`);
-        return;
-      }
-    }
-
-    const answerList = test.questions
-      .filter((q: TestQuestion) => q.id)
-      .map((q: TestQuestion) => {
-        if (this.hasMcq(q)) {
-          return {
-            questionId: q.id!,
-            selectedOptionIndex: this.selectedOptions[q.id!],
-            answer: q.options![this.selectedOptions[q.id!]],
-          };
-        }
-        return { questionId: q.id!, answer: this.answers[q.id!] || '' };
-      });
-
-    if (mcqQuestions.length === 0 && answerList.every((a) => !a.answer?.trim())) {
-      this.formError.set('Veuillez répondre à au moins une question');
-      return;
-    }
-
-    this.saving.set(true);
-    this.formError.set('');
-
-    this.evaluationService.submit({ testId: test.id, answers: answerList }).subscribe({
-      next: (result: EvaluationResult) => {
-        this.saving.set(false);
-        this.selectedTest.set(null);
-        this.submitResult.set(result);
-        this.loadAll();
-      },
-      error: (err: any) => {
-        this.formError.set(extractApiError(err));
-        this.saving.set(false);
-      },
-    });
   }
 
   closeSubmitResult(): void {
@@ -1238,26 +1090,6 @@ export class RhEvaluationsComponent implements OnInit {
 
   getQuestionScores(result: EvaluationResult | TestResult) {
     return this.hasQuestionScores(result) ? result.questionScores : [];
-  }
-
-  weightLabel(category: string): string {
-    const labels: Record<string, string> = {
-      CORE_SKILL: 'Compétence clé',
-      COMPLEMENTARY_SKILL: 'Complémentaire',
-      TECHNICAL_SOFT_SKILL: 'Soft skill',
-      GENERAL_CONTEXT: 'Contexte',
-    };
-    return labels[category] ?? category;
-  }
-
-  weightClass(category: string): string {
-    const classes: Record<string, string> = {
-      CORE_SKILL: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300',
-      COMPLEMENTARY_SKILL: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300',
-      TECHNICAL_SOFT_SKILL: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
-      GENERAL_CONTEXT: 'bg-gray-100 text-gray-600 dark:bg-dark-border dark:text-dark-text-secondary',
-    };
-    return classes[category] ?? classes['GENERAL_CONTEXT'];
   }
 
   getEmployeeName(): string {

@@ -171,6 +171,35 @@ export interface EvaluationResult {
   complianceScore?: number;
 }
 
+export interface CategoryGap {
+  category: string;
+  label: string;
+  averageScore: number;
+  weight: number;
+  questionCount: number;
+  status: 'STRONG' | 'ADEQUATE' | 'WEAK' | 'CRITICAL';
+  statusLabel: string;
+}
+
+export interface InterviewQuestion {
+  topic: string;
+  question: string;
+  rationale: string;
+  priority: 'HAUTE' | 'MOYENNE' | 'BASSE';
+}
+
+export interface SkillsGapAnalysis {
+  resultId: number;
+  profileName: string;
+  jobTitle: string;
+  icgScore: number;
+  categories: CategoryGap[];
+  strengths: string[];
+  weaknesses: string[];
+  interviewGuide: InterviewQuestion[];
+  hiringRecommendation: string;
+}
+
 export interface DashboardStats {
   totalProfiles: number;
   activeTests: number;
