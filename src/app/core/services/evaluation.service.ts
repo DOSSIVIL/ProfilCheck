@@ -6,6 +6,7 @@ import {
   EvaluationResult,
   EvaluationStartRequest,
   SkillTest,
+  SkillsGapAnalysis,
   TestSubmitRequest,
 } from '../models/api.models';
 
@@ -32,5 +33,9 @@ export class EvaluationService {
     return this.http.get(`${this.baseUrl}/results/${resultId}/report`, {
       responseType: 'blob',
     });
+  }
+
+  getSkillsGap(resultId: number): Observable<SkillsGapAnalysis> {
+    return this.http.get<SkillsGapAnalysis>(`${this.baseUrl}/results/${resultId}/skills-gap`);
   }
 }
